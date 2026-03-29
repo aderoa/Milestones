@@ -10,7 +10,6 @@ jobs:
     permissions:
       contents: write
     env:
-      SNAPSHOT_URL: ${{ secrets.SNAPSHOT_URL }}
       NAME_MAP_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vS2iZj3avZ_-CAWKu-f_pxZkf38M0quXQwMbyTXmHsN6-c9V8vU1l_sNaxg0y8dl07dqraU3_5Z3b8D/pub?gid=1197809522&single=true&output=csv"
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +28,7 @@ jobs:
           else
             python milestones.py --use-local --output milestones_today.csv
           fi
-      - name: Commit updated snapshot
+      - name: Commit snapshot + milestones
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

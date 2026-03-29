@@ -145,6 +145,53 @@ def fetch_alltime_leaders():
     return rankings
 
 
+# NBA team ID → 3-letter abbreviation (same as generate_recap.py)
+TEAM_ABBR = {
+    "1610612737": "ATL", "1610612738": "BOS", "1610612739": "CLE",
+    "1610612740": "NOP", "1610612741": "CHI", "1610612742": "DAL",
+    "1610612743": "DEN", "1610612744": "GSW", "1610612745": "HOU",
+    "1610612746": "LAC", "1610612747": "LAL", "1610612748": "MIA",
+    "1610612749": "MIL", "1610612750": "MIN", "1610612751": "BKN",
+    "1610612752": "NYK", "1610612753": "ORL", "1610612754": "IND",
+    "1610612755": "PHI", "1610612756": "PHX", "1610612757": "POR",
+    "1610612758": "SAC", "1610612759": "SAS", "1610612760": "OKC",
+    "1610612761": "TOR", "1610612762": "UTA", "1610612763": "MEM",
+    "1610612764": "WAS", "1610612765": "DET", "1610612766": "CHA",
+}
+
+
+def fetch_player_teams():
+    """Fetch active player → team_id mapping. Returns {player_id: team_id_str}."""
+    from nba_api.stats.endpoints import commonallplayers
+    print("  Fetching player-team mapping...")
+    try:
+        players = commonallplayers.CommonAllPlayers(
+            is_only_current_season=1, league_id="00", season="2025-26",
+            headers=NBA_HEADERS,
+        )
+        data = players.get_dict()
+        time.sleep(1)
+        rs = data["resultSets"][0]
+        hdrs = rs["headers"]
+        pid_col = hdrs.index("PERSON_ID") if "PERSON_ID" in hdrs else 0
+        tid_col = hdrs.index("TEAM_ID") if "TEAM_ID" in hdrs else 7
+        team_map = {}
+        for row in rs["rowSet"]:
+            pid, tid = row[pid_col], row[tid_col]
+            if pid and tid and tid != 0:
+                team_map[pid] = str(tid)
+        print(f"    Loaded {len(team_map)} player-team mappings")
+        return team_map
+    except Exception as e:
+        print(f"  Warning: could not fetch player teams: {e}")
+        return {}
+
+
+def make_logo_url(team_id):
+    """Build NBA CDN logo URL from team_id (used by generate_recap.py for team abbr)."""
+    return f"https://cdn.nba.com/logos/nba/{team_id}/primary/L/logo.svg" if team_id else ""
+
+
 # ── SNAPSHOT I/O ──────────────────────────────────────────────
 def load_snapshot_from_sheet():
     """
@@ -277,6 +324,7 @@ def detect_milestones(old_rankings, new_rankings, name_map=None):
                 milestones.append({
                     "player": display_name,
                     "player_raw": name,
+                    "player_id": entry.get("player_id"),
                     "stat": stat,
                     "label": STAT_LABELS[stat],
                     "new_rank": new_rank,
@@ -292,15 +340,18 @@ def detect_milestones(old_rankings, new_rankings, name_map=None):
 
 
 # ── OUTPUT ────────────────────────────────────────────────────
-def save_milestones_csv(milestones, path):
-    """Save milestones to CSV for the Recap sheet."""
+def save_milestones_csv(milestones, path, player_teams=None):
+    """Save milestones to CSV for the Recap sheet.
+    Includes LOGO_URL column so generate_recap.py can resolve team abbreviation."""
+    pt = player_teams or {}
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        # Header matches the Recap sheet's MILESTONES section format:
-        # PLAYER, RAT(unused), PASSED, CATEGORY, RANK, ...
         w.writerow(["PLAYER", "RAT", "PASSED", "CATEGORY", "RANK",
-                     "STAT_TOTAL", "PASSED_TOTAL", "STAT_CODE"])
+                     "STAT_TOTAL", "PASSED_TOTAL", "STAT_CODE", "LOGO_URL"])
         for m in milestones:
+            pid = m.get("player_id")
+            tid = pt.get(pid, "") if pid else ""
+            logo = make_logo_url(tid)
             w.writerow([
                 m["player"],
                 "",  # RAT column (unused for milestones)
@@ -310,6 +361,7 @@ def save_milestones_csv(milestones, path):
                 m["new_total"],
                 m["passed_total"],
                 m["stat"],
+                logo,
             ])
     print(f"  Milestones saved: {path} ({len(milestones)} entries)")
 
@@ -420,9 +472,17 @@ def main():
     milestones = detect_milestones(old_rankings, new_rankings, name_map)
     print_milestones(milestones)
 
+    # ── Step 5b: Fetch player teams for logo URLs
+    player_teams = {}
+    if milestones:
+        try:
+            player_teams = fetch_player_teams()
+        except Exception as e:
+            print(f"  Warning: could not fetch teams: {e}")
+
     # ── Step 6: Save outputs
     if milestones:
-        save_milestones_csv(milestones, args.output)
+        save_milestones_csv(milestones, args.output, player_teams)
 
         # Also print Recap-ready format
         recap_rows = format_for_recap_sheet(milestones)
